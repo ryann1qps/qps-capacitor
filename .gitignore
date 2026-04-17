@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Capacitor native projects (generated, can be re-added with `cap add`)
+ios/
+android/
+
+# Build artifacts
+dist/
+.cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Lockfile (optional — remove this line if you want to commit it)
+# package-lock.json
