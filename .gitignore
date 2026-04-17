@@ -2,8 +2,7 @@
 node_modules/
 
 # Capacitor native projects (generated, can be re-added with `cap add`)
-ios/
-android/
+
 
 # Build artifacts
 dist/
