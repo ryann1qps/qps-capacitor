@@ -27,7 +27,6 @@ workflows:
   capacitor-android:
     name: Capacitor Android
     max_build_duration: 60
-    instance_type: linux_x2
     environment:
       node: 20
       java: 17
