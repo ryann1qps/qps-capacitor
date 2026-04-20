@@ -131,6 +131,27 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  .ms-divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 16px 0; color: var(--text-secondary); font-size: 12px;
+  }
+  .ms-divider::before, .ms-divider::after {
+    content: ''; flex: 1; height: 1px; background: var(--border);
+  }
+
+  .ms-sign-btn {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    width: 100%; padding: 11px 16px; border-radius: 12px;
+    background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+    color: var(--text-primary); font-family: inherit; font-size: 14px;
+    font-weight: 500; cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  .ms-sign-btn:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.2); }
+  .ms-sign-btn:active { transform: scale(0.98); }
+  .ms-sign-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .ms-sign-btn svg { flex-shrink: 0; }
+
   /* ========== APP CONTAINER (hidden until auth) ========== */
   .app-container {
     position: relative; z-index: 1; max-width: 480px; margin: 0 auto;
@@ -280,6 +301,17 @@
       </div>
       <button type="submit" class="auth-btn" id="authBtn">Sign In</button>
     </form>
+
+    <div class="ms-divider">or</div>
+    <button class="ms-sign-btn" id="msSignInBtn">
+      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21">
+        <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
+        <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
+        <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
+        <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+      </svg>
+      Sign in with Microsoft
+    </button>
 
     <div class="auth-toggle" id="authToggle">
       Don't have an account? <a id="authToggleLink">Create one</a>
@@ -694,3 +726,4 @@
 
 </body>
 </html>
+
