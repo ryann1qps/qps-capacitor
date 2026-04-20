@@ -443,7 +443,8 @@
   import {
     getAuth,
     OAuthProvider,
-    signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     onAuthStateChanged,
@@ -463,6 +464,13 @@
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
 
+  // On app load, pick up the result if we're returning from a Microsoft redirect.
+  // onAuthStateChanged fires automatically on success; this catches errors.
+  getRedirectResult(auth).catch((err) => {
+    console.error('Redirect result error:', err);
+    window.dispatchEvent(new CustomEvent('ms-signin-error', { detail: err }));
+  });
+
   // Expose what the rest of the page needs on window, since the code below
   // this block runs as a classic script and can't import from a module.
   window.firebaseAuth = auth;
@@ -471,11 +479,7 @@
     provider.setCustomParameters({
       tenant: 'organizations' // or replace with your specific Azure tenant ID
     });
-    return signInWithPopup(auth, provider)
-      .then((result) => {
-        console.log("Signed in:", result.user.email);
-        return result.user;
-      });
+    return signInWithRedirect(auth, provider);
   };
   window.firebaseSignIn           = (email, pw) => signInWithEmailAndPassword(auth, email, pw);
   window.firebaseCreateUser       = (email, pw) => createUserWithEmailAndPassword(auth, email, pw);
@@ -544,43 +548,43 @@
 
   // ========== MICROSOFT SIGN IN ==========
   const msSignInBtn = document.getElementById('msSignInBtn');
-  msSignInBtn.addEventListener('click', async function() {
-    authError.classList.remove('show');
 
-    const originalHTML = msSignInBtn.innerHTML;
-    msSignInBtn.disabled = true;
-    msSignInBtn.innerHTML = '<span class="auth-loading"></span>Opening Microsoft…';
-
-    try {
-      await window.signInWithMicrosoft();
-      // Success path is handled by onAuthStateChanged.
-    } catch (err) {
-      console.error('Microsoft sign-in error:', err);
-      let msg = 'Microsoft sign-in failed. Please try again.';
-      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
-        msg = 'Sign-in was cancelled.';
-      } else if (err.code === 'auth/popup-blocked') {
-        msg = 'Popup was blocked. Please allow popups and try again.';
-      } else if (err.code === 'auth/account-exists-with-different-credential') {
-        msg = 'An account already exists with this email using a different sign-in method.';
-      } else if (err.code === 'auth/network-request-failed') {
-        msg = 'Network error. Check your connection and try again.';
-      } else if (err.code === 'auth/operation-not-allowed') {
-        msg = 'Microsoft sign-in is not enabled in Firebase. Enable it in the Firebase console.';
-      } else if (err.code === 'auth/unauthorized-domain') {
-        msg = 'This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.';
-      } else if (err.code) {
-        // Surface the raw code so unknown errors are debuggable in the UI.
-        msg = 'Sign-in failed: ' + err.code;
-      } else if (err.message) {
-        msg = 'Sign-in failed: ' + err.message;
-      }
-      authError.textContent = msg;
-      authError.classList.add('show');
-    } finally {
-      msSignInBtn.disabled = false;
-      msSignInBtn.innerHTML = originalHTML;
+  // Listen for errors coming back from getRedirectResult on load
+  window.addEventListener('ms-signin-error', function(e) {
+    const err = e.detail;
+    let msg = 'Microsoft sign-in failed. Please try again.';
+    if (err.code === 'auth/account-exists-with-different-credential') {
+      msg = 'An account already exists with this email using a different sign-in method.';
+    } else if (err.code === 'auth/network-request-failed') {
+      msg = 'Network error. Check your connection and try again.';
+    } else if (err.code === 'auth/operation-not-allowed') {
+      msg = 'Microsoft sign-in is not enabled in Firebase. Enable it in the Firebase console.';
+    } else if (err.code === 'auth/unauthorized-domain') {
+      msg = 'This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.';
+    } else if (err.code) {
+      msg = 'Sign-in failed: ' + err.code;
+    } else if (err.message) {
+      msg = 'Sign-in failed: ' + err.message;
     }
+    authError.textContent = msg;
+    authError.classList.add('show');
+    // Restore button
+    msSignInBtn.disabled = false;
+    msSignInBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg> Sign in with Microsoft';
+  });
+
+  msSignInBtn.addEventListener('click', function() {
+    authError.classList.remove('show');
+    msSignInBtn.disabled = true;
+    msSignInBtn.innerHTML = '<span class="auth-loading"></span>Redirecting to Microsoft…';
+    // signInWithRedirect navigates the page away — no need to await or reset
+    window.signInWithMicrosoft().catch(function(err) {
+      console.error('Microsoft sign-in error:', err);
+      authError.textContent = 'Could not start sign-in. Please try again.';
+      authError.classList.add('show');
+      msSignInBtn.disabled = false;
+      msSignInBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg> Sign in with Microsoft';
+    });
   });
 
   // ========== AUTH STATE LISTENER ==========
