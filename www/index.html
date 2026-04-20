@@ -436,18 +436,23 @@
 <script src="https://unpkg.com/@nickvdende/nickvde-capacitor-core@latest/dist/capacitor.js"></script>
 
 <!-- Firebase: modular SDK loaded as ES module from gstatic. The auth logic lives
-     inside the module below and exposes `signInWithMicrosoft` on window so the
-     rest of the (non-module) app code can still call it. -->
+     inside the module below and exposes helpers on window so the rest of the
+     (non-module) app code can still call them. -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
   import {
     getAuth,
     OAuthProvider,
-    signInWithCredential,
+    signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     onAuthStateChanged,
-    signOut
+    signOut,
+    browserLocalPersistence,
+    setPersistence,
+    indexedDBLocalPersistence
   } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
   const firebaseConfig = {
@@ -463,99 +468,43 @@
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
 
-  // signInWithMicrosoft: uses MSAL.js (loaded below) to get a token,
-  // then signs into Firebase with that token via signInWithCredential.
-  // This works inside Capacitor WebViews because MSAL handles its own
-  // popup/redirect internally without needing localhost.
-  window.signInWithMicrosoft = async function () {
-    if (!window._msalInstance) throw new Error('MSAL not ready');
-    const msalInstance = window._msalInstance;
-    const loginRequest = { scopes: ['openid', 'profile', 'email'] };
+  // Use IndexedDB persistence which survives Capacitor WebView reloads better
+  setPersistence(auth, indexedDBLocalPersistence).catch(() => {
+    setPersistence(auth, browserLocalPersistence).catch(() => {});
+  });
 
-    let tokenResponse;
-    try {
-      // Try silent first (already signed in)
-      const accounts = msalInstance.getAllAccounts();
-      if (accounts.length > 0) {
-        tokenResponse = await msalInstance.acquireTokenSilent({
-          ...loginRequest,
-          account: accounts[0]
-        });
-      } else {
-        tokenResponse = await msalInstance.loginPopup(loginRequest);
-      }
-    } catch (e) {
-      // Silent failed, fall back to popup
-      tokenResponse = await msalInstance.loginPopup(loginRequest);
-    }
+  // On load, check if we're returning from a Microsoft redirect (mobile flow)
+  getRedirectResult(auth).catch((err) => {
+    console.error('Redirect result error:', err);
+    window.dispatchEvent(new CustomEvent('ms-signin-error', { detail: err }));
+  });
 
-    // Exchange the MSAL id token for a Firebase credential
+  // Detect if we're inside a Capacitor native WebView
+  const isCapacitorNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
+  window.signInWithMicrosoft = function () {
     const provider = new OAuthProvider('microsoft.com');
-    const credential = provider.credential({
-      idToken: tokenResponse.idToken,
-      accessToken: tokenResponse.accessToken
-    });
-    return signInWithCredential(auth, credential);
+    provider.setCustomParameters({ tenant: 'organizations' });
+    provider.addScope('openid');
+    provider.addScope('profile');
+    provider.addScope('email');
+
+    // Native app → redirect flow (popup can't work in WebView)
+    // Browser → popup (better UX, no page reload)
+    if (isCapacitorNative) {
+      return signInWithRedirect(auth, provider);
+    } else {
+      return signInWithPopup(auth, provider).then(r => r.user);
+    }
   };
 
-  window.firebaseAuth = auth;
+  window.firebaseAuth               = auth;
   window.firebaseSignIn             = (email, pw) => signInWithEmailAndPassword(auth, email, pw);
   window.firebaseCreateUser         = (email, pw) => createUserWithEmailAndPassword(auth, email, pw);
   window.firebaseSignOut            = () => signOut(auth);
   window.firebaseOnAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
 
-  // Let the rest of the page know auth is ready.
   window.dispatchEvent(new Event('firebase-ready'));
-</script>
-
-<!-- MSAL.js for Microsoft sign-in (works inside Capacitor WebViews) -->
-<script>
-  // IMPORTANT: Replace clientId with your Azure AD Application (client) ID.
-  // authority: use 'organizations' for any work/school account,
-  //            or replace with your specific tenant ID to restrict to one org.
-  (function loadMsal() {
-    var urls = [
-      'https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.js',
-      'https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.js',
-      'https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js'
-    ];
-    var idx = 0;
-
-    function tryNext() {
-      if (idx >= urls.length) {
-        console.error('Failed to load MSAL.js from all sources');
-        return;
-      }
-      var script = document.createElement('script');
-      script.src = urls[idx++];
-      script.onload = function() {
-        try {
-          var msalConfig = {
-            auth: {
-              clientId: 'aa49880f-b446-456a-b225-e37e7ea7b7ef',
-              authority: 'https://login.microsoftonline.com/organizations',
-              redirectUri: 'https://ryann1qps.github.io/qps-capacitor/'
-            },
-            cache: {
-              cacheLocation: 'localStorage',
-              storeAuthStateInCookie: false
-            }
-          };
-          window._msalInstance = new msal.PublicClientApplication(msalConfig);
-          console.log('MSAL ready');
-        } catch (e) {
-          console.error('MSAL init failed:', e);
-        }
-      };
-      script.onerror = function() {
-        console.warn('MSAL load failed from ' + script.src + ', trying next…');
-        tryNext();
-      };
-      document.head.appendChild(script);
-    }
-
-    tryNext();
-  })();
 </script>
 
 <script>
@@ -616,6 +565,17 @@
 
   // ========== MICROSOFT SIGN IN ==========
   const msSignInBtn = document.getElementById('msSignInBtn');
+
+  // Handle errors returned from MSAL redirect flow on page reload
+  window.addEventListener('ms-signin-error', function(e) {
+    var err = e.detail;
+    var msg = 'Microsoft sign-in failed. Please try again.';
+    if (err && err.errorCode === 'access_denied') msg = 'Sign-in was cancelled.';
+    else if (err && err.message) msg = 'Sign-in failed: ' + err.message;
+    authError.textContent = msg;
+    authError.classList.add('show');
+    msSignInBtn.disabled = false;
+  });
 
   msSignInBtn.addEventListener('click', async function() {
     authError.classList.remove('show');
