@@ -443,8 +443,7 @@
   import {
     getAuth,
     OAuthProvider,
-    signInWithRedirect,
-    getRedirectResult,
+    signInWithCredential,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     onAuthStateChanged,
@@ -464,30 +463,99 @@
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
 
-  // On app load, pick up the result if we're returning from a Microsoft redirect.
-  // onAuthStateChanged fires automatically on success; this catches errors.
-  getRedirectResult(auth).catch((err) => {
-    console.error('Redirect result error:', err);
-    window.dispatchEvent(new CustomEvent('ms-signin-error', { detail: err }));
-  });
+  // signInWithMicrosoft: uses MSAL.js (loaded below) to get a token,
+  // then signs into Firebase with that token via signInWithCredential.
+  // This works inside Capacitor WebViews because MSAL handles its own
+  // popup/redirect internally without needing localhost.
+  window.signInWithMicrosoft = async function () {
+    if (!window._msalInstance) throw new Error('MSAL not ready');
+    const msalInstance = window._msalInstance;
+    const loginRequest = { scopes: ['openid', 'profile', 'email'] };
 
-  // Expose what the rest of the page needs on window, since the code below
-  // this block runs as a classic script and can't import from a module.
-  window.firebaseAuth = auth;
-  window.signInWithMicrosoft = function () {
+    let tokenResponse;
+    try {
+      // Try silent first (already signed in)
+      const accounts = msalInstance.getAllAccounts();
+      if (accounts.length > 0) {
+        tokenResponse = await msalInstance.acquireTokenSilent({
+          ...loginRequest,
+          account: accounts[0]
+        });
+      } else {
+        tokenResponse = await msalInstance.loginPopup(loginRequest);
+      }
+    } catch (e) {
+      // Silent failed, fall back to popup
+      tokenResponse = await msalInstance.loginPopup(loginRequest);
+    }
+
+    // Exchange the MSAL id token for a Firebase credential
     const provider = new OAuthProvider('microsoft.com');
-    provider.setCustomParameters({
-      tenant: 'organizations' // or replace with your specific Azure tenant ID
+    const credential = provider.credential({
+      idToken: tokenResponse.idToken,
+      accessToken: tokenResponse.accessToken
     });
-    return signInWithRedirect(auth, provider);
+    return signInWithCredential(auth, credential);
   };
-  window.firebaseSignIn           = (email, pw) => signInWithEmailAndPassword(auth, email, pw);
-  window.firebaseCreateUser       = (email, pw) => createUserWithEmailAndPassword(auth, email, pw);
-  window.firebaseSignOut          = () => signOut(auth);
+
+  window.firebaseAuth = auth;
+  window.firebaseSignIn             = (email, pw) => signInWithEmailAndPassword(auth, email, pw);
+  window.firebaseCreateUser         = (email, pw) => createUserWithEmailAndPassword(auth, email, pw);
+  window.firebaseSignOut            = () => signOut(auth);
   window.firebaseOnAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
 
-  // Let the rest of the page know auth is ready (in case it loaded first).
+  // Let the rest of the page know auth is ready.
   window.dispatchEvent(new Event('firebase-ready'));
+</script>
+
+<!-- MSAL.js for Microsoft sign-in (works inside Capacitor WebViews) -->
+<script>
+  // IMPORTANT: Replace clientId with your Azure AD Application (client) ID.
+  // authority: use 'organizations' for any work/school account,
+  //            or replace with your specific tenant ID to restrict to one org.
+  (function loadMsal() {
+    var urls = [
+      'https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.js',
+      'https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.js',
+      'https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js'
+    ];
+    var idx = 0;
+
+    function tryNext() {
+      if (idx >= urls.length) {
+        console.error('Failed to load MSAL.js from all sources');
+        return;
+      }
+      var script = document.createElement('script');
+      script.src = urls[idx++];
+      script.onload = function() {
+        try {
+          var msalConfig = {
+            auth: {
+              clientId: 'YOUR_AZURE_CLIENT_ID',   // ← replace this
+              authority: 'https://login.microsoftonline.com/organizations',
+              redirectUri: 'https://login.microsoftonline.com/common/oauth2/nativeclient'
+            },
+            cache: {
+              cacheLocation: 'localStorage',
+              storeAuthStateInCookie: false
+            }
+          };
+          window._msalInstance = new msal.PublicClientApplication(msalConfig);
+          console.log('MSAL ready');
+        } catch (e) {
+          console.error('MSAL init failed:', e);
+        }
+      };
+      script.onerror = function() {
+        console.warn('MSAL load failed from ' + script.src + ', trying next…');
+        tryNext();
+      };
+      document.head.appendChild(script);
+    }
+
+    tryNext();
+  })();
 </script>
 
 <script>
@@ -549,42 +617,37 @@
   // ========== MICROSOFT SIGN IN ==========
   const msSignInBtn = document.getElementById('msSignInBtn');
 
-  // Listen for errors coming back from getRedirectResult on load
-  window.addEventListener('ms-signin-error', function(e) {
-    const err = e.detail;
-    let msg = 'Microsoft sign-in failed. Please try again.';
-    if (err.code === 'auth/account-exists-with-different-credential') {
-      msg = 'An account already exists with this email using a different sign-in method.';
-    } else if (err.code === 'auth/network-request-failed') {
-      msg = 'Network error. Check your connection and try again.';
-    } else if (err.code === 'auth/operation-not-allowed') {
-      msg = 'Microsoft sign-in is not enabled in Firebase. Enable it in the Firebase console.';
-    } else if (err.code === 'auth/unauthorized-domain') {
-      msg = 'This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.';
-    } else if (err.code) {
-      msg = 'Sign-in failed: ' + err.code;
-    } else if (err.message) {
-      msg = 'Sign-in failed: ' + err.message;
-    }
-    authError.textContent = msg;
-    authError.classList.add('show');
-    // Restore button
-    msSignInBtn.disabled = false;
-    msSignInBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg> Sign in with Microsoft';
-  });
-
-  msSignInBtn.addEventListener('click', function() {
+  msSignInBtn.addEventListener('click', async function() {
     authError.classList.remove('show');
+    const originalHTML = msSignInBtn.innerHTML;
     msSignInBtn.disabled = true;
-    msSignInBtn.innerHTML = '<span class="auth-loading"></span>Redirecting to Microsoft…';
-    // signInWithRedirect navigates the page away — no need to await or reset
-    window.signInWithMicrosoft().catch(function(err) {
+    msSignInBtn.innerHTML = '<span class="auth-loading"></span>Signing in…';
+
+    try {
+      await window.signInWithMicrosoft();
+      // Success — onAuthStateChanged handles the rest
+    } catch (err) {
       console.error('Microsoft sign-in error:', err);
-      authError.textContent = 'Could not start sign-in. Please try again.';
+      let msg = 'Microsoft sign-in failed. Please try again.';
+      if (err.code === 'auth/account-exists-with-different-credential') {
+        msg = 'An account already exists with this email using a different sign-in method.';
+      } else if (err.code === 'auth/network-request-failed') {
+        msg = 'Network error. Check your connection and try again.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        msg = 'Microsoft sign-in is not enabled in Firebase. Enable it in the Firebase console.';
+      } else if (err.code === 'auth/unauthorized-domain') {
+        msg = 'This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.';
+      } else if (err.code) {
+        msg = 'Sign-in failed: ' + err.code;
+      } else if (err.message) {
+        msg = 'Sign-in failed: ' + err.message;
+      }
+      authError.textContent = msg;
       authError.classList.add('show');
+    } finally {
       msSignInBtn.disabled = false;
-      msSignInBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 21 21"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg> Sign in with Microsoft';
-    });
+      msSignInBtn.innerHTML = originalHTML;
+    }
   });
 
   // ========== AUTH STATE LISTENER ==========
