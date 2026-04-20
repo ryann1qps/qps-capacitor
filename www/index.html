@@ -421,12 +421,21 @@
 <!-- Capacitor Core -->
 <script src="https://unpkg.com/@nickvdende/nickvde-capacitor-core@latest/dist/capacitor.js"></script>
 
-<!-- Firebase SDKs (compat for simple script-tag usage) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<!-- Firebase: modular SDK loaded as ES module from gstatic. The auth logic lives
+     inside the module below and exposes `signInWithMicrosoft` on window so the
+     rest of the (non-module) app code can still call it. -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import {
+    getAuth,
+    OAuthProvider,
+    signInWithPopup,
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    onAuthStateChanged,
+    signOut
+  } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-<script>
-  // ========== FIREBASE CONFIG ==========
   const firebaseConfig = {
     apiKey: "AIzaSyAhkZvJxfhtTAiOJjlwJj6WS2q4shdQL-E",
     authDomain: "qps-one.firebaseapp.com",
@@ -437,8 +446,38 @@
     measurementId: "G-KX31F6QBR3"
   };
 
-  firebase.initializeApp(firebaseConfig);
-  const auth = firebase.auth();
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+
+  // Expose what the rest of the page needs on window, since the code below
+  // this block runs as a classic script and can't import from a module.
+  window.firebaseAuth = auth;
+  window.signInWithMicrosoft = function () {
+    const provider = new OAuthProvider('microsoft.com');
+    provider.setCustomParameters({
+      tenant: 'organizations' // or replace with your specific Azure tenant ID
+    });
+    return signInWithPopup(auth, provider)
+      .then((result) => {
+        console.log("Signed in:", result.user.email);
+        return result.user;
+      });
+  };
+  window.firebaseSignIn           = (email, pw) => signInWithEmailAndPassword(auth, email, pw);
+  window.firebaseCreateUser       = (email, pw) => createUserWithEmailAndPassword(auth, email, pw);
+  window.firebaseSignOut          = () => signOut(auth);
+  window.firebaseOnAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
+
+  // Let the rest of the page know auth is ready (in case it loaded first).
+  window.dispatchEvent(new Event('firebase-ready'));
+</script>
+
+<script>
+  // ========== FIREBASE ==========
+  // Firebase initialization happens in the <script type="module"> block above.
+  // That module exposes helpers on `window` (firebaseAuth, signInWithMicrosoft,
+  // firebaseSignIn, firebaseCreateUser, firebaseSignOut, firebaseOnAuthStateChanged)
+  // which we use below.
 
   // ========== CAPACITOR PLUGINS ==========
   // Initialize Capacitor native features when running on device
@@ -525,9 +564,9 @@
 
     try {
       if (isSignUp) {
-        await auth.createUserWithEmailAndPassword(email, password);
+        await window.firebaseCreateUser(email, password);
       } else {
-        await auth.signInWithEmailAndPassword(email, password);
+        await window.firebaseSignIn(email, password);
       }
     } catch (err) {
       let msg = 'Something went wrong. Please try again.';
@@ -553,28 +592,84 @@
 
   // ========== SIGN OUT ==========
   signOutBtn.addEventListener('click', function() {
-    auth.signOut();
+    window.firebaseSignOut();
+  });
+
+  // ========== MICROSOFT SIGN IN ==========
+  const msSignInBtn = document.getElementById('msSignInBtn');
+  msSignInBtn.addEventListener('click', async function() {
+    authError.classList.remove('show');
+
+    if (typeof window.signInWithMicrosoft !== 'function') {
+      authError.textContent = 'Auth is still loading. Please wait a moment and try again.';
+      authError.classList.add('show');
+      return;
+    }
+
+    const originalHTML = msSignInBtn.innerHTML;
+    msSignInBtn.disabled = true;
+    msSignInBtn.innerHTML = '<span class="auth-loading"></span>Opening Microsoft…';
+
+    try {
+      await window.signInWithMicrosoft();
+      // Success path is handled by onAuthStateChanged.
+    } catch (err) {
+      console.error('Microsoft sign-in error:', err);
+      let msg = 'Microsoft sign-in failed. Please try again.';
+      if (err.code === 'auth/popup-closed-by-user' || err.code === 'auth/cancelled-popup-request') {
+        msg = 'Sign-in was cancelled.';
+      } else if (err.code === 'auth/popup-blocked') {
+        msg = 'Popup was blocked. Please allow popups and try again.';
+      } else if (err.code === 'auth/account-exists-with-different-credential') {
+        msg = 'An account already exists with this email using a different sign-in method.';
+      } else if (err.code === 'auth/network-request-failed') {
+        msg = 'Network error. Check your connection and try again.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        msg = 'Microsoft sign-in is not enabled in Firebase. Enable it in the Firebase console.';
+      } else if (err.code === 'auth/unauthorized-domain') {
+        msg = 'This domain is not authorized in Firebase. Add it under Authentication → Settings → Authorized domains.';
+      } else if (err.code) {
+        // Surface the raw code so unknown errors are debuggable in the UI.
+        msg = 'Sign-in failed: ' + err.code;
+      } else if (err.message) {
+        msg = 'Sign-in failed: ' + err.message;
+      }
+      authError.textContent = msg;
+      authError.classList.add('show');
+    } finally {
+      msSignInBtn.disabled = false;
+      msSignInBtn.innerHTML = originalHTML;
+    }
   });
 
   // ========== AUTH STATE LISTENER ==========
-  auth.onAuthStateChanged(function(user) {
-    if (user) {
-      // Logged in — hide auth, show app
-      authScreen.classList.add('hidden');
-      appContainer.classList.add('visible');
-      userEmailBar.textContent = 'Signed in as ' + user.email;
-      startClock();
-    } else {
-      // Logged out — show auth, hide app
-      authScreen.classList.remove('hidden');
-      appContainer.classList.remove('visible');
-      userEmailBar.textContent = '';
-      // Reset form
-      authBtn.disabled = false;
-      authBtn.textContent = isSignUp ? 'Create Account' : 'Sign In';
-      authPassword.value = '';
-    }
-  });
+  function attachAuthListener() {
+    window.firebaseOnAuthStateChanged(function(user) {
+      if (user) {
+        // Logged in — hide auth, show app
+        authScreen.classList.add('hidden');
+        appContainer.classList.add('visible');
+        userEmailBar.textContent = 'Signed in as ' + user.email;
+        startClock();
+      } else {
+        // Logged out — show auth, hide app
+        authScreen.classList.remove('hidden');
+        appContainer.classList.remove('visible');
+        userEmailBar.textContent = '';
+        // Reset form
+        authBtn.disabled = false;
+        authBtn.textContent = isSignUp ? 'Create Account' : 'Sign In';
+        authPassword.value = '';
+      }
+    });
+  }
+  // The Firebase module script may load after this classic script (modules are
+  // deferred by default). Attach now if ready, otherwise wait for the event.
+  if (window.firebaseOnAuthStateChanged) {
+    attachAuthListener();
+  } else {
+    window.addEventListener('firebase-ready', attachAuthListener, { once: true });
+  }
 
    // ========== CLOCK ==========
   function updateClock() {
