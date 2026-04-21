@@ -5,13 +5,16 @@ const config: CapacitorConfig = {
   appName: 'QPS Hub',
   webDir: 'www',
   server: {
+    hostname: 'qps-one.firebaseapp.com',
     androidScheme: 'https',
     iosScheme: 'https',
-    // Allow loading Firebase and Google Fonts from external URLs
     allowNavigation: [
       'https://*.firebaseapp.com',
       'https://*.googleapis.com',
       'https://*.gstatic.com',
+      'https://login.microsoftonline.com',
+      'https://*.microsoftonline.com',
+      'https://login.live.com',
     ],
   },
   plugins: {
