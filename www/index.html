@@ -432,8 +432,8 @@
 
 </div>
 
-<!-- Capacitor Core -->
-<script src="https://unpkg.com/@nickvdende/nickvde-capacitor-core@latest/dist/capacitor.js"></script>
+<!-- Capacitor Core is auto-injected by the native runtime at app startup.
+     No script tag is needed; window.Capacitor will exist inside the WebView. -->
 
 <!-- Firebase: modular SDK loaded as ES module from gstatic. The auth logic lives
      inside the module below and exposes helpers on window so the rest of the
@@ -479,8 +479,28 @@
     window.dispatchEvent(new CustomEvent('ms-signin-error', { detail: err }));
   });
 
-  // Detect if we're inside a Capacitor native WebView
-  const isCapacitorNative = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  // Detect if we're inside a Capacitor native WebView.
+  // Checks multiple signals because any single one can fail:
+  //   - window.Capacitor object (injected by native runtime)
+  //   - UserAgent includes 'Capacitor' or native WebView hints
+  //   - Lack of standard desktop browser traits
+  const isCapacitorNative = (function() {
+    try {
+      if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function') {
+        if (window.Capacitor.isNativePlatform()) return true;
+      }
+      if (window.Capacitor && window.Capacitor.platform && window.Capacitor.platform !== 'web') return true;
+      // UA fallback — Android WebView in Capacitor often contains 'wv' or 'Capacitor'
+      var ua = navigator.userAgent || '';
+      if (/Capacitor/i.test(ua)) return true;
+    } catch (e) {}
+    return false;
+  })();
+
+  console.log('[Auth] isCapacitorNative =', isCapacitorNative, '| UA:', navigator.userAgent);
+
+  // Expose a helper so we can surface the detection to the UI if needed
+  window._isCapacitorNative = isCapacitorNative;
 
   window.signInWithMicrosoft = function () {
     const provider = new OAuthProvider('microsoft.com');
@@ -492,8 +512,10 @@
     // Native app → redirect flow (popup can't work in WebView)
     // Browser → popup (better UX, no page reload)
     if (isCapacitorNative) {
+      console.log('[Auth] Using signInWithRedirect (native)');
       return signInWithRedirect(auth, provider);
     } else {
+      console.log('[Auth] Using signInWithPopup (web)');
       return signInWithPopup(auth, provider).then(r => r.user);
     }
   };
