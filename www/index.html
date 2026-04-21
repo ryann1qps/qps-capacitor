@@ -494,27 +494,26 @@
   //     We then sign into the JS Firebase Auth instance with signInWithCredential
   //     so the rest of the app (which uses the web SDK) stays in sync.
   //   Web → signInWithPopup (works fine in real browsers).
+  // Helper to access the native plugin
+  function getNativePlugin() {
+    return window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
+  }
+
   window.signInWithMicrosoft = async function () {
     if (isCapacitorNative) {
       console.log('[Auth] Using native FirebaseAuthentication plugin');
-      // The native plugin is auto-registered by Capacitor at window.Capacitor.Plugins.FirebaseAuthentication
-      const FirebaseAuthentication = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
+      const FirebaseAuthentication = getNativePlugin();
       if (!FirebaseAuthentication) {
         throw new Error('FirebaseAuthentication plugin not available. Did you run "npx cap sync" after installing?');
       }
+      // The native plugin signs the user into Firebase on the native side and
+      // returns the user object. We DON'T re-sign via signInWithCredential
+      // because the token audience doesn't match Firebase's expectations.
+      // Instead the rest of the UI is driven by the plugin's authStateChange.
       const result = await FirebaseAuthentication.signInWithMicrosoft({
         customParameters: [{ key: 'tenant', value: 'organizations' }],
         scopes: ['openid', 'profile', 'email']
       });
-      // Plugin signs in on the native side; mirror that into the JS SDK.
-      if (result && result.credential && result.credential.idToken) {
-        const provider = new OAuthProvider('microsoft.com');
-        const credential = provider.credential({
-          idToken: result.credential.idToken,
-          accessToken: result.credential.accessToken
-        });
-        await signInWithCredential(auth, credential);
-      }
       return result && result.user;
     } else {
       console.log('[Auth] Using signInWithPopup (web)');
@@ -528,11 +527,37 @@
     }
   };
 
+  // Sign out: route through plugin on native, JS SDK on web.
+  window.firebaseSignOut = async function() {
+    if (isCapacitorNative) {
+      const FirebaseAuthentication = getNativePlugin();
+      if (FirebaseAuthentication) {
+        try { await FirebaseAuthentication.signOut(); } catch (e) { console.warn('Native signOut failed:', e); }
+      }
+    }
+    return signOut(auth);
+  };
+
+  // Auth state observer: on native, use the plugin; on web, use JS SDK.
+  window.firebaseOnAuthStateChanged = function(cb) {
+    if (isCapacitorNative) {
+      const FirebaseAuthentication = getNativePlugin();
+      if (FirebaseAuthentication) {
+        // Fire once immediately with current user
+        FirebaseAuthentication.getCurrentUser().then(r => cb(r && r.user ? r.user : null)).catch(() => cb(null));
+        // Subscribe to future changes
+        FirebaseAuthentication.addListener('authStateChange', (change) => {
+          cb(change && change.user ? change.user : null);
+        });
+        return;
+      }
+    }
+    return onAuthStateChanged(auth, cb);
+  };
+
   window.firebaseAuth               = auth;
   window.firebaseSignIn             = (email, pw) => signInWithEmailAndPassword(auth, email, pw);
   window.firebaseCreateUser         = (email, pw) => createUserWithEmailAndPassword(auth, email, pw);
-  window.firebaseSignOut            = () => signOut(auth);
-  window.firebaseOnAuthStateChanged = (cb) => onAuthStateChanged(auth, cb);
 
   window.dispatchEvent(new Event('firebase-ready'));
 </script>
