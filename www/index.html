@@ -511,14 +511,17 @@
       // because the token audience doesn't match Firebase's expectations.
       // Instead the rest of the UI is driven by the plugin's authStateChange.
       const result = await FirebaseAuthentication.signInWithMicrosoft({
-        customParameters: [{ key: 'tenant', value: 'organizations' }],
+        customParameters: [
+          { key: 'tenant', value: 'organizations' },
+          { key: 'prompt', value: 'select_account' }
+        ],
         scopes: ['openid', 'profile', 'email']
       });
       return result && result.user;
     } else {
       console.log('[Auth] Using signInWithPopup (web)');
       const provider = new OAuthProvider('microsoft.com');
-      provider.setCustomParameters({ tenant: 'organizations' });
+      provider.setCustomParameters({ tenant: 'organizations', prompt: 'select_account' });
       provider.addScope('openid');
       provider.addScope('profile');
       provider.addScope('email');
