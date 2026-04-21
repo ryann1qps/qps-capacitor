@@ -444,8 +444,7 @@
     getAuth,
     OAuthProvider,
     signInWithPopup,
-    signInWithRedirect,
-    getRedirectResult,
+    signInWithCredential,
     signInWithEmailAndPassword,
     createUserWithEmailAndPassword,
     onAuthStateChanged,
@@ -468,55 +467,64 @@
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
 
-  // Use IndexedDB persistence which survives Capacitor WebView reloads better
+  // Persistence — IndexedDB with localStorage fallback
   setPersistence(auth, indexedDBLocalPersistence).catch(() => {
     setPersistence(auth, browserLocalPersistence).catch(() => {});
   });
 
-  // On load, check if we're returning from a Microsoft redirect (mobile flow)
-  getRedirectResult(auth).catch((err) => {
-    console.error('Redirect result error:', err);
-    window.dispatchEvent(new CustomEvent('ms-signin-error', { detail: err }));
-  });
-
-  // Detect if we're inside a Capacitor native WebView.
-  // Checks multiple signals because any single one can fail:
-  //   - window.Capacitor object (injected by native runtime)
-  //   - UserAgent includes 'Capacitor' or native WebView hints
-  //   - Lack of standard desktop browser traits
+  // Detect Capacitor native platform
   const isCapacitorNative = (function() {
     try {
       if (window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function') {
         if (window.Capacitor.isNativePlatform()) return true;
       }
       if (window.Capacitor && window.Capacitor.platform && window.Capacitor.platform !== 'web') return true;
-      // UA fallback — Android WebView in Capacitor often contains 'wv' or 'Capacitor'
-      var ua = navigator.userAgent || '';
-      if (/Capacitor/i.test(ua)) return true;
+      if (/Capacitor/i.test(navigator.userAgent || '')) return true;
     } catch (e) {}
     return false;
   })();
 
-  console.log('[Auth] isCapacitorNative =', isCapacitorNative, '| UA:', navigator.userAgent);
-
-  // Expose a helper so we can surface the detection to the UI if needed
+  console.log('[Auth] isCapacitorNative =', isCapacitorNative);
   window._isCapacitorNative = isCapacitorNative;
 
-  window.signInWithMicrosoft = function () {
-    const provider = new OAuthProvider('microsoft.com');
-    provider.setCustomParameters({ tenant: 'organizations' });
-    provider.addScope('openid');
-    provider.addScope('profile');
-    provider.addScope('email');
-
-    // Native app → redirect flow (popup can't work in WebView)
-    // Browser → popup (better UX, no page reload)
+  // Microsoft sign-in:
+  //   Native (Capacitor) → use @capacitor-firebase/authentication plugin.
+  //     The plugin uses the native Firebase SDK, which talks directly to
+  //     Microsoft via a Chrome Custom Tab and returns the id/access tokens.
+  //     We then sign into the JS Firebase Auth instance with signInWithCredential
+  //     so the rest of the app (which uses the web SDK) stays in sync.
+  //   Web → signInWithPopup (works fine in real browsers).
+  window.signInWithMicrosoft = async function () {
     if (isCapacitorNative) {
-      console.log('[Auth] Using signInWithRedirect (native)');
-      return signInWithRedirect(auth, provider);
+      console.log('[Auth] Using native FirebaseAuthentication plugin');
+      // The native plugin is auto-registered by Capacitor at window.Capacitor.Plugins.FirebaseAuthentication
+      const FirebaseAuthentication = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.FirebaseAuthentication;
+      if (!FirebaseAuthentication) {
+        throw new Error('FirebaseAuthentication plugin not available. Did you run "npx cap sync" after installing?');
+      }
+      const result = await FirebaseAuthentication.signInWithMicrosoft({
+        customParameters: [{ key: 'tenant', value: 'organizations' }],
+        scopes: ['openid', 'profile', 'email']
+      });
+      // Plugin signs in on the native side; mirror that into the JS SDK.
+      if (result && result.credential && result.credential.idToken) {
+        const provider = new OAuthProvider('microsoft.com');
+        const credential = provider.credential({
+          idToken: result.credential.idToken,
+          accessToken: result.credential.accessToken
+        });
+        await signInWithCredential(auth, credential);
+      }
+      return result && result.user;
     } else {
       console.log('[Auth] Using signInWithPopup (web)');
-      return signInWithPopup(auth, provider).then(r => r.user);
+      const provider = new OAuthProvider('microsoft.com');
+      provider.setCustomParameters({ tenant: 'organizations' });
+      provider.addScope('openid');
+      provider.addScope('profile');
+      provider.addScope('email');
+      const r = await signInWithPopup(auth, provider);
+      return r.user;
     }
   };
 

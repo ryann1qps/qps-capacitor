@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "406798044276",
+    "project_id": "qps-one",
+    "storage_bucket": "qps-one.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:406798044276:android:4a5f8b8ff23ff94560d521",
+        "android_client_info": {
+          "package_name": "com.qps.hub"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "406798044276-i49qgh8qto28na666ht042j4qbkd2sqb.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCbpDaA6n_vxPXPBXrAql2Wxl4A5Ce-Ov4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "406798044276-i49qgh8qto28na666ht042j4qbkd2sqb.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

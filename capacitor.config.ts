@@ -5,16 +5,12 @@ const config: CapacitorConfig = {
   appName: 'QPS Hub',
   webDir: 'www',
   server: {
-    hostname: 'qps-one.firebaseapp.com',
     androidScheme: 'https',
     iosScheme: 'https',
     allowNavigation: [
       'https://*.firebaseapp.com',
       'https://*.googleapis.com',
-      'https://*.gstatic.com',
-      'https://login.microsoftonline.com',
-      'https://*.microsoftonline.com',
-      'https://login.live.com',
+	  'https://*.gstatic.com',
     ],
   },
   plugins: {
